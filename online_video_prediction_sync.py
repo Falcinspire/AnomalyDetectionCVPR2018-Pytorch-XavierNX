@@ -49,9 +49,9 @@ if __name__ == "__main__":
     video_path = args.video
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Warmup the models. If this is ignored, the initial part of the video 
-    # will not be processed as the warmup occurs there. Not sure why the 
-    # models need to warm up.
+    # Warmup the models. If this is ignored, the video will freeze at the 
+    # beginning as the warmup occurs there. Not sure why the models need 
+    # to warm up.
     feature_extractor(torch.zeros((1, 3, 16, 112, 112)).to(device))
     anomaly_detector(torch.zeros((1, 4096)).to(device))
     
