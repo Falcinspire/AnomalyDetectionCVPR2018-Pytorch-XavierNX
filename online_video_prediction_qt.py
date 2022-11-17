@@ -206,7 +206,7 @@ class Window(QWidget):
                 self.label.setPixmap(pxmap)
                 self.fps_label.setText(f' {processing_fps:.0f} fps')
 
-                if len(pred_x) % 10 == 0:
+                if frame_number % 10 == 0:
                     self.graphData.setData(pred_x[-64:], pred_y[-64:])
 
             QApplication.processEvents()
