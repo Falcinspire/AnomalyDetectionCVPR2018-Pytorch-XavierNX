@@ -107,6 +107,12 @@ def processing_thread(transforms, feature_extractor, anomaly_detector):
                 pred_y.append(new_pred.item())
                 processing_fps = clip_length / clip_processing_time
 
+def accurate_sleep(seconds):
+    wait_until = time.perf_counter() + seconds
+    while True:
+        now = time.perf_counter()
+        if now >= wait_until: 
+            return
 class Window(QWidget):
     """
     Anomaly detection gui
@@ -186,7 +192,6 @@ class Window(QWidget):
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         spf = 1 / fps
         last_frame_time = -1
-        MAGIC_DELAY = 0.01 # extra delay that isn't captured by time.perf_counter()
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -196,7 +201,7 @@ class Window(QWidget):
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pxmap = QPixmap.fromImage(QImage(frame, frame.shape[1],frame.shape[0],frame.strides[0],QImage.Format_RGB888))
             delta = time.perf_counter() - last_frame_time
-            time.sleep(max(0, spf - delta - MAGIC_DELAY))
+            accurate_sleep(max(0, spf - delta))
             with global_edit_lock:
                 frame_number += 1
                 frame_buffer.append(frame)
