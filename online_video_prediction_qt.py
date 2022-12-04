@@ -217,6 +217,7 @@ class Window(QWidget):
         last_frame_time = -1
 
         inference_fps = None
+        rolling_playback_fps = []
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -242,6 +243,10 @@ class Window(QWidget):
             
             delta = time.perf_counter() - last_frame_time
             accurate_sleep(max(0, spf - delta))
+            rolling_playback_fps.append(1/(time.perf_counter() - last_frame_time))
+            if len(rolling_playback_fps) == 10:
+                print(f'playback is {np.mean(rolling_playback_fps)}fps')
+                rolling_playback_fps = []
             self.label.setPixmap(pxmap)
             last_frame_time = time.perf_counter()
             self.frame_times.append(last_frame_time)
