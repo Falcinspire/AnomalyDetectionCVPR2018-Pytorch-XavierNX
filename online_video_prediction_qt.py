@@ -245,7 +245,7 @@ class Window(QWidget):
             accurate_sleep(max(0, spf - delta))
             rolling_playback_fps.append(1/(time.perf_counter() - last_frame_time))
             if len(rolling_playback_fps) == 10:
-                print(f'playback is {np.mean(rolling_playback_fps)}fps')
+                print(f'playback is {np.mean(rolling_playback_fps):.0f}fps')
                 rolling_playback_fps = []
             self.label.setPixmap(pxmap)
             last_frame_time = time.perf_counter()
@@ -279,6 +279,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = Window(parent_conn)
     rc = app.exec_()
+    print('terminating model process...')
     parent_conn.send(('terminate',))
     p.join()
     sys.exit(rc)
