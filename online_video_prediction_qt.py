@@ -112,6 +112,8 @@ def inference_process(pipe: Pipe, feature_extractor, ad_model, feature_method, f
                     frame_buffer.append(frame)
                     frame_buffer = frame_buffer[-CLIP_LENGTH:]
                     frame_buffer_dirty = True
+                elif message[0] == 'terminate':
+                    return
             
             if not frame_buffer_dirty:
                 continue
@@ -168,8 +170,8 @@ class Window(QWidget):
 
     def init_ui(self):
         # create open button
-        openBtn = QPushButton("Open Video")
-        openBtn.clicked.connect(self.open_file)
+        self.openBtn = QPushButton("Open Video")
+        self.openBtn.clicked.connect(self.open_file)
 
         # create label
         self.label = QLabel()
@@ -188,7 +190,7 @@ class Window(QWidget):
         # set widgets to the hbox layout
         gridLayout.addWidget(self.graphWidget, 0, 0, 1, 5)
         gridLayout.addWidget(self.label, 1, 0, 5, 5)
-        gridLayout.addWidget(openBtn, 6, 0, 1, 1)
+        gridLayout.addWidget(self.openBtn, 6, 0, 1, 1)
         gridLayout.addWidget(self.fps_label, 6, 1, 1, 1)
 
         self.setLayout(gridLayout)
@@ -196,6 +198,7 @@ class Window(QWidget):
     def open_file(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Open Video")
         if filename != "":
+            self.openBtn.setDisabled(True)
             self.frame_number = -1
             self.frame_times = []
             self.pred_x_buffer = []
@@ -218,7 +221,7 @@ class Window(QWidget):
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
-                return
+                break
 
             if self.pipe.poll():
                 message = self.pipe.recv()
@@ -251,6 +254,7 @@ class Window(QWidget):
 
             QApplication.processEvents()
         cap.release()
+        self.openBtn.setDisabled(False)
 
 if __name__ == "__main__":
     args = get_args()
@@ -270,5 +274,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = Window(parent_conn)
     rc = app.exec_()
+    parent_conn.send(('terminate',))
     p.join()
     sys.exit(rc)
