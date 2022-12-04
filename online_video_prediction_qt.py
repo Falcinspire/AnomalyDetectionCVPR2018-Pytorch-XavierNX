@@ -257,7 +257,7 @@ if __name__ == "__main__":
 
     print('starting model process...')
     parent_conn, child_conn = Pipe()
-    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, 1))
+    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, 0))
     p.start()
 
     await_status_message = parent_conn.recv()
