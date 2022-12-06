@@ -41,7 +41,6 @@ def get_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--feature_extractor",
-        required=True,
         help="path to the 3d model for feature extraction",
     )
     parser.add_argument(
@@ -51,40 +50,64 @@ def get_args() -> argparse.Namespace:
         help="method to use for feature extraction",
     )
     parser.add_argument(
-        "--ad_model", required=True, help="path to the trained AD model"
+        "--ad_model", 
+        help="path to the trained AD model",
     )
     parser.add_argument(
-        "--n_segments",
-        type=int,
-        default=32,
-        help="number of segments to use for features averaging",
+        "--mock_delay", 
+        type=int, 
+        help="Use a mock delay for the model instead of running it. Inference is always 0.",
     )
 
     return parser.parse_args()
 
+CLIP_LENGTH = 16
+
+class ModelInference:
+    def __init__(self, feature_extractor, ad_model, feature_method):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        anomaly_detector, feature_extractor = load_models(
+            feature_extractor,
+            ad_model,
+            features_method=feature_method,
+            device=device,
+        )
+
+        transforms = build_transforms(mode=feature_method)
+
+        # Warmup the models. If this is ignored, the initial part of the video 
+        # will not be processed as the warmup occurs there. Not sure why the 
+        # models need to warm up.
+        feature_extractor(torch.zeros((1, 3, 16, 112, 112)).to(device))
+        anomaly_detector(torch.zeros((1, 4096)).to(device))
+
+        self.device = device
+        self.transforms = transforms
+        self.feature_extractor = feature_extractor
+        self.anomaly_detector = anomaly_detector
+
+    def predict(self, clip):
+        clip = self.transforms(clip).unsqueeze(0)
+        outputs = self.feature_extractor(clip.to(self.device)).detach().cpu().numpy()
+        outputs = to_segments(outputs, 1)
+        return self.anomaly_detector(torch.tensor(outputs).to(self.device)).item()
+
+class MockDelayInference:
+    def __init__(self, delay):
+        self.delay = delay
+    def predict(self, clip):
+        accurate_sleep(self.delay)
+        return 0
+
 def inference_process(pipe: Pipe, feature_extractor, ad_model, feature_method, forced_delay):
     print('loading models...')
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    anomaly_detector, feature_extractor = load_models(
-        feature_extractor,
-        ad_model,
-        features_method=feature_method,
-        device=device,
-    )
-
-    transforms = build_transforms(mode=feature_method)
-
-    # Warmup the models. If this is ignored, the initial part of the video 
-    # will not be processed as the warmup occurs there. Not sure why the 
-    # models need to warm up.
-    print('warming up models...')
-    feature_extractor(torch.zeros((1, 3, 16, 112, 112)).to(device))
-    anomaly_detector(torch.zeros((1, 4096)).to(device))
+    inference_machine = \
+        ModelInference(feature_extractor, ad_model, feature_method) \
+        if forced_delay is None else \
+        MockDelayInference(forced_delay)
 
     print('inference process ready...')
     pipe.send(('status', 'ready'))
-
-    CLIP_LENGTH = 16
 
     frame_buffer = []
     frame_buffer_numbers = []
@@ -123,14 +146,10 @@ def inference_process(pipe: Pipe, feature_extractor, ad_model, feature_method, f
             
             last_frame_number = frame_buffer_numbers[-1]
             clip = torch.tensor(copy(frame_buffer[-CLIP_LENGTH:]))
-            clip = transforms(clip).unsqueeze(0)
-            outputs = feature_extractor(clip.to(device)).detach().cpu().numpy()
-            outputs = to_segments(outputs, 1)
-            new_pred = anomaly_detector(torch.tensor(outputs).to(device))
-            accurate_sleep(forced_delay)
+            new_pred = inference_machine.predict(clip)
             frame_buffer_dirty = False
             
-            pipe.send(('inference', (last_frame_number - 16 + 1, last_frame_number, new_pred.item())))
+            pipe.send(('inference', (last_frame_number - 16 + 1, last_frame_number, new_pred)))
 
 def accurate_sleep(seconds):
     wait_until = time.perf_counter() + seconds
@@ -175,9 +194,18 @@ class Window(QWidget):
 
         # create label
         self.label = QLabel()
+
         self.fps_label = QLabel()
-        self.fps_label.setText(' -- fps')
+        self.fps_label.setText(' --fps inference')
         self.fps_label.setStyleSheet("QLabel { background-color : white; color : black; }");
+
+        self.playback_fps_label = QLabel()
+        self.playback_fps_label.setText(' --fps playback')
+        self.playback_fps_label.setStyleSheet("QLabel { background-color : white; color : black; }");
+
+        self.skipped_label = QLabel()
+        self.skipped_label.setText(' Skipped -- individual frames')
+        self.skipped_label.setStyleSheet("QLabel { background-color : white; color : black; }");
 
         # create grid layout
         gridLayout = QGridLayout()
@@ -192,6 +220,8 @@ class Window(QWidget):
         gridLayout.addWidget(self.label, 1, 0, 5, 5)
         gridLayout.addWidget(self.openBtn, 6, 0, 1, 1)
         gridLayout.addWidget(self.fps_label, 6, 1, 1, 1)
+        gridLayout.addWidget(self.playback_fps_label, 6, 2, 1, 1)
+        gridLayout.addWidget(self.skipped_label, 6, 3, 1, 1)
 
         self.setLayout(gridLayout)
 
@@ -199,7 +229,7 @@ class Window(QWidget):
         filename, _ = QFileDialog.getOpenFileName(self, "Open Video")
         if filename != "":
             self.openBtn.setDisabled(True)
-            self.frame_number = -1
+            self.frame_number = 0
             self.frame_times = []
             self.pred_x_buffer = []
             self.pred_y_buffer = []
@@ -219,40 +249,57 @@ class Window(QWidget):
         inference_fps = None
         rolling_playback_fps = []
 
+        total_clips_skipped = 0
+        total_frames_skipped = 0
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
+            
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pxmap = QPixmap.fromImage(QImage(frame, frame.shape[1],frame.shape[0],frame.strides[0],QImage.Format_RGB888))
 
+            delta = time.perf_counter() - last_frame_time
+            accurate_sleep(max(0, spf - delta))
+
+            # poll events after sleep
             if self.pipe.poll():
                 message = self.pipe.recv()
                 if message[0] == 'inference':
                     start_frame, end_frame = message[1][0], message[1][1]
                     prediction = message[1][2]
+
+                    initial_frame_time = self.frame_times[start_frame]
+                    inference_fps = (end_frame - start_frame + 1) / (time.perf_counter() - initial_frame_time)
+
+                    if len(self.pred_y_buffer) > 0:
+                        last_frame_predicted = self.pred_x_buffer[-1]
+                        total_clips_skipped += end_frame - (last_frame_predicted + 1)
+                        total_frames_skipped += max(0, start_frame - (last_frame_predicted + 1))
+
                     self.pred_x_buffer.append(end_frame)
                     self.pred_x_buffer = self.pred_x_buffer[-64:]
                     self.pred_y_buffer.append(prediction)
                     self.pred_y_buffer = self.pred_y_buffer[-64:]
-                    initial_frame_time = self.frame_times[start_frame]
-                    inference_fps = (end_frame - start_frame + 1) / (time.perf_counter() - initial_frame_time)
-            
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pxmap = QPixmap.fromImage(QImage(frame, frame.shape[1],frame.shape[0],frame.strides[0],QImage.Format_RGB888))
-            self.frame_number += 1
-            self.pipe.send(('frame', self.frame_number))
-            
-            delta = time.perf_counter() - last_frame_time
-            accurate_sleep(max(0, spf - delta))
-            rolling_playback_fps.append(1/(time.perf_counter() - last_frame_time))
-            if len(rolling_playback_fps) == 10:
-                print(f'playback is {np.mean(rolling_playback_fps):.0f}fps')
-                rolling_playback_fps = []
+
             self.label.setPixmap(pxmap)
-            last_frame_time = time.perf_counter()
-            self.frame_times.append(last_frame_time)
+            cur_frame_time = time.perf_counter()
+            rolling_playback_fps.append(1/(cur_frame_time - last_frame_time))
+            self.frame_times.append(cur_frame_time)
+            last_frame_time = cur_frame_time
+
+            self.pipe.send(('frame', self.frame_number))
+            self.frame_number += 1
+
+            self.skipped_label.setText(f' Skipped {total_frames_skipped} individual frames')
+
+            if len(rolling_playback_fps) == 10:
+                self.playback_fps_label.setText(f' {np.mean(rolling_playback_fps):.0f}fps playback')
+                rolling_playback_fps = []
 
             if inference_fps is not None:
-                self.fps_label.setText(f' {inference_fps:.0f} fps')
+                self.fps_label.setText(f' {inference_fps:.0f}fps inference')
 
             if self.frame_number % 10 == 0:
                 self.graphData.setData(self.pred_x_buffer, self.pred_y_buffer)
@@ -266,7 +313,7 @@ if __name__ == "__main__":
 
     print('starting model process...')
     parent_conn, child_conn = Pipe()
-    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, 0))
+    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, args.mock_delay))
     p.start()
 
     await_status_message = parent_conn.recv()
