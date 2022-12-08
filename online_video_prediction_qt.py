@@ -313,7 +313,7 @@ class Window(QWidget):
             if inference_fps is not None:
                 self.fps_label.setText(f' {inference_fps:.0f}fps inference')
 
-            if self.frame_number % 5 == 0:
+            if self.frame_number % 10 == 0:
                 self.graphData.setData(self.pred_x_buffer, self.pred_y_buffer)
 
             QApplication.processEvents()
