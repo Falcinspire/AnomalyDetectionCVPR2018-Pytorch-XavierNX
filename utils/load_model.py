@@ -114,6 +114,6 @@ def load_models(
     if use_trt:
         from torch2trt import torch2trt
         feature_extractor = torch2trt(feature_extractor, 
-            [torch.zeros((1, 3, 16, 112, 112)).cuda()])
-        anomaly_detector = torch2trt(anomaly_detector, [torch.zeros((1, 4096)).cuda()])
+            [torch.zeros((1, 3, 16, 112, 112)).cuda()], fp16_mode=True)
+        anomaly_detector = torch2trt(anomaly_detector, [torch.zeros((1, 4096)).cuda()], fp16_mode=True)
     return anomaly_detector, feature_extractor
