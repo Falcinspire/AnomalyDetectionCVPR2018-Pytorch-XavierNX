@@ -213,6 +213,10 @@ class Window(QWidget):
         self.skipped_label.setText(' Skipped -- individual frames')
         self.skipped_label.setStyleSheet("QLabel { background-color : white; color : black; }");
 
+        self.cur_frame_label = QLabel()
+        self.cur_frame_label.setText(' frame --')
+        self.cur_frame_label.setStyleSheet("QLabel { background-color : white; color : black; }");
+
         # create grid layout
         gridLayout = QGridLayout()
 
@@ -228,6 +232,7 @@ class Window(QWidget):
         gridLayout.addWidget(self.fps_label, 6, 1, 1, 1)
         gridLayout.addWidget(self.playback_fps_label, 6, 2, 1, 1)
         gridLayout.addWidget(self.skipped_label, 6, 3, 1, 1)
+        gridLayout.addWidget(self.cur_frame_label, 6, 4, 1, 1)
 
         self.setLayout(gridLayout)
 
@@ -289,6 +294,7 @@ class Window(QWidget):
                     self.pred_y_buffer.append(prediction)
                     self.pred_y_buffer = self.pred_y_buffer[-64:]
 
+            self.cur_frame_label.setText(f' frame {self.frame_number}')
             self.label.setPixmap(pxmap)
             cur_frame_time = time.perf_counter()
             rolling_playback_fps.append(1/(cur_frame_time - last_frame_time))
@@ -307,8 +313,7 @@ class Window(QWidget):
             if inference_fps is not None:
                 self.fps_label.setText(f' {inference_fps:.0f}fps inference')
 
-            if self.frame_number % 10 == 0:
-                self.graphData.setData(self.pred_x_buffer, self.pred_y_buffer)
+            self.graphData.setData(self.pred_x_buffer, self.pred_y_buffer)
 
             QApplication.processEvents()
         cap.release()
