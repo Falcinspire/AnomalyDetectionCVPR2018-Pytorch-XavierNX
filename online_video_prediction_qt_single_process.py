@@ -152,6 +152,10 @@ class Window(QWidget):
         self.playback_fps_label.setText(' --fps playback')
         self.playback_fps_label.setStyleSheet("QLabel { background-color : white; color : black; }");
 
+        self.skipped_frames_label = QLabel()
+        self.skipped_frames_label.setText(' -- skipped frames ')
+        self.skipped_frames_label.setStyleSheet("QLabel { background-color : white; color : black; }");
+
         self.cur_frame_label = QLabel()
         self.cur_frame_label.setText(' frame --')
         self.cur_frame_label.setStyleSheet("QLabel { background-color : white; color : black; }");
@@ -169,6 +173,7 @@ class Window(QWidget):
         gridLayout.addWidget(self.label, 1, 0, 5, 5)
         gridLayout.addWidget(self.openBtn, 6, 0, 1, 1)
         gridLayout.addWidget(self.playback_fps_label, 6, 1, 1, 1)
+        gridLayout.addWidget(self.skipped_frames_label, 6, 2, 1, 1)
         gridLayout.addWidget(self.cur_frame_label, 6, 4, 1, 1)
 
         self.setLayout(gridLayout)
@@ -190,6 +195,7 @@ class Window(QWidget):
         last_frame_time = -1
 
         frame_buffer = []
+        skipped_frames = 0
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -199,11 +205,22 @@ class Window(QWidget):
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pxmap = QPixmap.fromImage(QImage(frame, frame.shape[1],frame.shape[0],frame.strides[0],QImage.Format_RGB888))
 
+            delta = time.perf_counter() - last_frame_time
+            accurate_sleep(max(0, spf - delta))
+
+            self.cur_frame_label.setText(f' frame {self.frame_number}')
+            self.label.setPixmap(pxmap)
+            cur_frame_time = time.perf_counter()
+            cur_fps = 1/(cur_frame_time - last_frame_time)
+            self.playback_fps_label.setText(f' {cur_fps:.0f}fps')
+            last_frame_time = cur_frame_time
+
             frame_buffer.append(frame)
             frame_buffer = frame_buffer[-CLIP_LENGTH:]
             if len(frame_buffer) < CLIP_LENGTH:
                 continue
             if self.frame_number % 8 == 0:
+                inference_time_start = time.perf_counter()
                 clip = torch.tensor(copy(frame_buffer[-CLIP_LENGTH:]))
                 new_pred = self.inference_machine.predict(clip)
                 self.pred_x_buffer.append(self.frame_number)
@@ -211,17 +228,17 @@ class Window(QWidget):
                 self.pred_y_buffer.append(new_pred)
                 self.pred_y_buffer = self.pred_y_buffer[-64:]
                 self.graphData.setData(self.pred_x_buffer, self.pred_y_buffer)
+                inference_time_end = time.perf_counter()
+                inference_time = inference_time_end - inference_time_start
+                skip_frames = int(inference_time / spf)
+                skipped_frames += skip_frames
+                for _ in range(skip_frames):
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                self.skipped_frames_label.setText(f' {skipped_frames} skipped frames')
+                last_frame_time = time.perf_counter()
 
-            delta = time.perf_counter() - last_frame_time
-            accurate_sleep(max(0, spf - delta))
-
-            self.cur_frame_label.setText(f' frame {self.frame_number}')
-            self.label.setPixmap(pxmap)
-            cur_frame_time = time.perf_counter()
-            fps = 1/(cur_frame_time - last_frame_time)
-            print(fps)
-            self.playback_fps_label.setText(f' {fps:.0f}fps')
-            last_frame_time = cur_frame_time
             self.frame_number += 1              
 
             QApplication.processEvents()
