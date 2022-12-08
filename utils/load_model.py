@@ -93,6 +93,7 @@ def load_models(
     ad_model_path: str,
     features_method: str = "c3d",
     device: str = "cuda",
+    use_trt: bool = False
 ) -> Tuple[nn.Module, nn.Module]:
     """Loads both feature extractor and anomaly detector from the given paths.
 
@@ -110,4 +111,9 @@ def load_models(
         features_method, feature_extractor_path, device
     )
     anomaly_detector = load_anomaly_detector(ad_model_path, device)
+    if use_trt:
+        from torch2trt import torch2trt
+        feature_extractor = torch2trt(feature_extractor, 
+            [torch.zeros((1, 3, 16, 112, 112)).cuda()])
+        anomaly_detector = torch2trt(anomaly_detector, [torch.zeros((1, 4096)).cuda()])
     return anomaly_detector, feature_extractor
