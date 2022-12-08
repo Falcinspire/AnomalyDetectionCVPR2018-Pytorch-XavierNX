@@ -58,19 +58,25 @@ def get_args() -> argparse.Namespace:
         type=int, 
         help="Use a mock delay for the model instead of running it. Inference is always 0.",
     )
+    parser.add_argument(
+        "--use-torch-trt", 
+        action='store_true', 
+        help="Optimize the model with torch2trt",
+    )
 
     return parser.parse_args()
 
 CLIP_LENGTH = 16
 
 class ModelInference:
-    def __init__(self, feature_extractor, ad_model, feature_method):
+    def __init__(self, feature_extractor, ad_model, feature_method, should_use_torch_trt):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         anomaly_detector, feature_extractor = load_models(
             feature_extractor,
             ad_model,
             features_method=feature_method,
             device=device,
+            use_trt=should_use_torch_trt,
         )
 
         transforms = build_transforms(mode=feature_method)
@@ -99,10 +105,10 @@ class MockDelayInference:
         accurate_sleep(self.delay)
         return 0
 
-def inference_process(pipe: Pipe, feature_extractor, ad_model, feature_method, forced_delay):
+def inference_process(pipe: Pipe, feature_extractor, ad_model, feature_method, forced_delay, should_use_torch_trt):
     print('loading models...')
     inference_machine = \
-        ModelInference(feature_extractor, ad_model, feature_method) \
+        ModelInference(feature_extractor, ad_model, feature_method, should_use_torch_trt) \
         if forced_delay is None else \
         MockDelayInference(forced_delay)
 
@@ -313,7 +319,7 @@ if __name__ == "__main__":
 
     print('starting model process...')
     parent_conn, child_conn = Pipe()
-    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, args.mock_delay))
+    p = Process(target=inference_process, args=(child_conn, args.feature_extractor, args.ad_model, args.feature_method, args.mock_delay, args.use_torch_trt))
     p.start()
 
     await_status_message = parent_conn.recv()
